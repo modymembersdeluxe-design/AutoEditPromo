@@ -1,0 +1,2 @@
+# Stdlib-only runtime dependencies for core app.
+# FFmpeg + FFprobe must be installed separately and available in PATH.

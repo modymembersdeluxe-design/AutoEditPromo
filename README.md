@@ -58,3 +58,7 @@ python main.py
 
 ## Output
 Generated files are written to `output/`, including `output/final_promo.mp4`.
+
+## Font note
+- To avoid `Fontconfig error: Cannot load default config file`, the app uses explicit `fontfile=` drawtext paths.
+- If no known font file is found on your system, generation continues and skips text overlays instead of failing.

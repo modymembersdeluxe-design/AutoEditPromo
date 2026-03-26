@@ -290,7 +290,10 @@ class PromoEditor:
             av = mixed
 
         final = output_dir / f"{req.generated_name_preset} - {req.build_mode} - {suffix}.mp4"
-        draw = self._drawtext_filter(req, total_duration)
+        font_file = self._find_font_file(req.base_dir)
+        if font_file is None:
+            self.log("Font file not found; skipping drawtext overlays to avoid Fontconfig errors.")
+        draw = self._drawtext_filter(req, total_duration, font_file)
         bitrate = f"{max(req.custom_bitrate_k, 400)}k"
         cmd_final = [
             "ffmpeg",
@@ -407,7 +410,21 @@ class PromoEditor:
         ]
         run_cmd(cmd)
 
-    def _drawtext_filter(self, req: PromoRequest, total_duration: float) -> str:
+    def _find_font_file(self, base_dir: Path) -> Path | None:
+        candidates = [
+            base_dir / "fonts" / "DejaVuSans.ttf",
+            base_dir / "fonts" / "Arial.ttf",
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+            Path("/Library/Fonts/Arial.ttf"),
+            Path("C:/Windows/Fonts/arial.ttf"),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _drawtext_filter(self, req: PromoRequest, total_duration: float, font_file: Path | None) -> str:
         def esc(text: str) -> str:
             return text.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
 
@@ -415,22 +432,29 @@ class PromoEditor:
             "fade=t=in:st=0:d=0.5",
             f"fade=t=out:st={max(total_duration - 0.7, 0.0):.2f}:d=0.7",
         ]
+        if font_file is None:
+            return ",".join(filters)
+
+        font_arg = f"fontfile='{esc(str(font_file))}':"
 
         mode_text = f"{req.build_mode.upper()} | Remix={int(req.auto_remix_enabled)} | AutoEdit={int(req.auto_edit_enabled)}"
         filters.append(
-            "drawtext=text='{}':x=(w-text_w)/2:y=h*0.03:fontcolor=white:fontsize=24:"
+            "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.03:fontcolor=white:fontsize=24:"
             "box=1:boxcolor=black@0.35:boxborderw=8:enable='between(t,0,6)'".format(esc(mode_text))
+            .replace("{font}", font_arg)
         )
 
         if req.title:
             filters.append(
-                "drawtext=text='{}':x=(w-text_w)/2:y=h*0.10:fontcolor=white:fontsize=52:"
+                "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.10:fontcolor=white:fontsize=52:"
                 "box=1:boxcolor=black@0.45:boxborderw=16:enable='between(t,0,4)'".format(esc(req.title))
+                .replace("{font}", font_arg)
             )
         if req.subtitle:
             filters.append(
-                "drawtext=text='{}':x=(w-text_w)/2:y=h*0.20:fontcolor=white:fontsize=30:"
+                "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.20:fontcolor=white:fontsize=30:"
                 "box=1:boxcolor=black@0.35:boxborderw=10:enable='between(t,1,6)'".format(esc(req.subtitle))
+                .replace("{font}", font_arg)
             )
 
         msg_window = 2.8
@@ -440,10 +464,11 @@ class PromoEditor:
             if end <= start:
                 break
             filters.append(
-                "drawtext=text='{}':x=(w-text_w)/2:y=h*0.82:fontcolor=yellow:fontsize=38:"
+                "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.82:fontcolor=yellow:fontsize=38:"
                 "box=1:boxcolor=black@0.4:boxborderw=12:enable='between(t,{:.2f},{:.2f})'".format(
                     esc(msg), start, end
                 )
+                .replace("{font}", font_arg)
             )
 
         return ",".join(filters)

@@ -439,22 +439,19 @@ class PromoEditor:
 
         mode_text = f"{req.build_mode.upper()} | Remix={int(req.auto_remix_enabled)} | AutoEdit={int(req.auto_edit_enabled)}"
         filters.append(
-            "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.03:fontcolor=white:fontsize=24:"
-            "box=1:boxcolor=black@0.35:boxborderw=8:enable='between(t,0,6)'".format(esc(mode_text))
-            .replace("{font}", font_arg)
+            f"drawtext={font_arg}text='{esc(mode_text)}':x=(w-text_w)/2:y=h*0.03:fontcolor=white:fontsize=24:"
+            "box=1:boxcolor=black@0.35:boxborderw=8:enable='between(t,0,6)'"
         )
 
         if req.title:
             filters.append(
-                "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.10:fontcolor=white:fontsize=52:"
-                "box=1:boxcolor=black@0.45:boxborderw=16:enable='between(t,0,4)'".format(esc(req.title))
-                .replace("{font}", font_arg)
+                f"drawtext={font_arg}text='{esc(req.title)}':x=(w-text_w)/2:y=h*0.10:fontcolor=white:fontsize=52:"
+                "box=1:boxcolor=black@0.45:boxborderw=16:enable='between(t,0,4)'"
             )
         if req.subtitle:
             filters.append(
-                "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.20:fontcolor=white:fontsize=30:"
-                "box=1:boxcolor=black@0.35:boxborderw=10:enable='between(t,1,6)'".format(esc(req.subtitle))
-                .replace("{font}", font_arg)
+                f"drawtext={font_arg}text='{esc(req.subtitle)}':x=(w-text_w)/2:y=h*0.20:fontcolor=white:fontsize=30:"
+                "box=1:boxcolor=black@0.35:boxborderw=10:enable='between(t,1,6)'"
             )
 
         msg_window = 2.8
@@ -464,11 +461,8 @@ class PromoEditor:
             if end <= start:
                 break
             filters.append(
-                "drawtext={font}text='{}':x=(w-text_w)/2:y=h*0.82:fontcolor=yellow:fontsize=38:"
-                "box=1:boxcolor=black@0.4:boxborderw=12:enable='between(t,{:.2f},{:.2f})'".format(
-                    esc(msg), start, end
-                )
-                .replace("{font}", font_arg)
+                f"drawtext={font_arg}text='{esc(msg)}':x=(w-text_w)/2:y=h*0.82:fontcolor=yellow:fontsize=38:"
+                f"box=1:boxcolor=black@0.4:boxborderw=12:enable='between(t,{start:.2f},{end:.2f})'"
             )
 
         return ",".join(filters)

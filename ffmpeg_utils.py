@@ -68,6 +68,20 @@ def parse_media_info(meta: dict) -> dict[str, float | int]:
     return {"duration": duration, "width": width, "height": height, "fps": fps}
 
 
+def parse_tbpm(meta: dict) -> float | None:
+    tags = meta.get("format", {}).get("tags", {}) or {}
+    raw = tags.get("TBPM") or tags.get("tbpm") or tags.get("BPM") or tags.get("bpm")
+    if raw is None:
+        return None
+    try:
+        bpm = float(str(raw).strip())
+    except ValueError:
+        return None
+    if bpm <= 0:
+        return None
+    return bpm
+
+
 def get_media_info(path: Path) -> dict[str, float | int]:
     return parse_media_info(ffprobe_media(path))
 
@@ -115,7 +129,9 @@ def extract_segment(src: Path, dst: Path, start: float, duration: float, logger)
     run_cmd(recode_cmd, check=True)
 
 
-def normalize_clip(src: Path, dst: Path, width: int, height: int, fps: int) -> None:
+def normalize_clip(
+    src: Path, dst: Path, width: int, height: int, fps: int, *, preset: str = "veryfast", crf: int = 20
+) -> None:
     vf = (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
@@ -133,9 +149,9 @@ def normalize_clip(src: Path, dst: Path, width: int, height: int, fps: int) -> N
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        preset,
         "-crf",
-        "20",
+        str(crf),
         str(dst),
     ]
     run_cmd(cmd)

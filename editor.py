@@ -3,11 +3,11 @@ from __future__ import annotations
 import random
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from assets import choose_random, random_segment_start, scan_asset_folders
+from assets import AUDIO_EXTS, VIDEO_EXTS, choose_random, random_segment_start, scan_asset_folders, scan_paths
 from ffmpeg_utils import (
     FFmpegError,
     build_xfade_filter,
@@ -16,6 +16,8 @@ from ffmpeg_utils import (
     get_media_info,
     mix_audio_or_silence,
     normalize_clip,
+    parse_tbpm,
+    ffprobe_media,
     run_cmd,
 )
 
@@ -71,6 +73,19 @@ class PromoRequest:
     use_intro_asset: bool = False
     use_outro_asset: bool = False
     generated_name_preset: str = "Generated Mega Deluxe Promo & Remix & Songs"
+    video_folders: list[Path] | None = None
+    audio_folders: list[Path] | None = None
+    recursive_scan: bool = False
+    audio_mode: str = "random_one"  # random_one / combine_shuffled
+    resolution: str = "1280x720"
+    crf_quality: int = 20
+    style_preset: str = "Clean 2000s"
+    transition_mode: str = "fade"  # fade / cut
+    dance_effects: int = 40
+    dance_mode_preset: str = "Auto"  # Auto / Soft / Hard / Off
+    audio_remix_mode: str = "Original"  # Original / Nightcore / Slow Jam / Hyper Dance
+    instant_vfx: bool = False
+    draft_mode_10x: bool = False
 
 
 class PromoEditor:
@@ -86,6 +101,14 @@ class PromoEditor:
             random.seed(req.random_seed)
 
         assets = scan_asset_folders(req.base_dir)
+        if req.video_folders:
+            assets["videos"] = sorted(
+                set(assets["videos"] + scan_paths(req.video_folders, VIDEO_EXTS, recursive=req.recursive_scan))
+            )
+        if req.audio_folders:
+            assets["music"] = sorted(
+                set(assets["music"] + scan_paths(req.audio_folders, AUDIO_EXTS, recursive=req.recursive_scan))
+            )
         if not assets["videos"] and not assets["images"]:
             raise ValueError("No source media found. Put files in /videos or /images.")
 
@@ -102,7 +125,7 @@ class PromoEditor:
         output_dir = req.base_dir / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        music = assets["music"][0] if assets["music"] else None
+        music = self._select_music_source(req, assets["music"], output_dir)
         if req.auto_mute_mode == "mute_all":
             music = None
             self.log("Auto-mute mode: mute_all")
@@ -110,6 +133,15 @@ class PromoEditor:
             music = None
             self.log("Auto-mute mode: mute_music")
 
+        if music and req.audio_remix_mode != "Original":
+            remixed = output_dir / "_temp_remix_audio.m4a"
+            self._remix_audio(music, remixed, req.audio_remix_mode)
+            music = remixed
+
+        source_bpm = self._detect_bpm(music) if music else None
+        if source_bpm:
+            self.log(f"Detected TBPM/BPM from audio tags: {source_bpm:.1f}")
+            req.fallback_bpm = int(source_bpm)
         seg_len = self._compute_segment_length(req)
         planned_count = self._compute_clip_count(req, seg_len)
 
@@ -189,6 +221,60 @@ class PromoEditor:
             base = (req.min_clip_sec + req.max_clip_sec) / 2
         return min(max(base, req.min_clip_sec), req.max_clip_sec)
 
+    def _select_music_source(self, req: PromoRequest, music_files: list[Path], output_dir: Path) -> Path | None:
+        if not music_files:
+            return None
+        if req.audio_mode == "combine_shuffled" and len(music_files) > 1:
+            pool = music_files.copy()
+            random.shuffle(pool)
+            concat_file = output_dir / "_temp_music_concat.txt"
+            lines: list[str] = []
+            for p in pool:
+                escaped = str(p).replace("'", "'\\''")
+                lines.append(f"file '{escaped}'\n")
+            concat_file.write_text("".join(lines), encoding="utf-8")
+            out = output_dir / "_temp_music_combined.m4a"
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                str(out),
+            ]
+            run_cmd(cmd)
+            self.log(f"Music mode combine_shuffled selected ({len(pool)} tracks).")
+            return out
+        picked = random.choice(music_files)
+        self.log(f"Music mode random_one selected: {picked.name}")
+        return picked
+
+    def _detect_bpm(self, music: Path) -> float | None:
+        try:
+            meta = ffprobe_media(music)
+            return parse_tbpm(meta)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _remix_audio(self, src: Path, out: Path, mode: str) -> None:
+        if mode == "Nightcore":
+            af = "asetrate=48000*1.18,aresample=48000,atempo=1.06"
+        elif mode == "Slow Jam":
+            af = "asetrate=44100*0.9,aresample=44100,atempo=0.92"
+        elif mode == "Hyper Dance":
+            af = "asetrate=48000*1.3,aresample=48000,atempo=1.15"
+        else:
+            shutil.copy2(src, out)
+            return
+        run_cmd(["ffmpeg", "-y", "-i", str(src), "-af", af, "-c:a", "aac", "-b:a", "192k", str(out)])
+
     def _compute_clip_count(self, req: PromoRequest, seg_len: float) -> int:
         auto_count = max(int(req.target_duration / max(seg_len - req.transition_seconds, 0.3)), 2)
         return max(min(req.total_clips, 200), auto_count)
@@ -206,7 +292,11 @@ class PromoEditor:
         elif req.quality_profile == "preview_360p":
             base = (640, 360)
         else:
-            base = (1280, 720)
+            try:
+                rw, rh = req.resolution.lower().split("x", 1)
+                base = (max(int(rw), 64), max(int(rh), 64))
+            except Exception:  # noqa: BLE001
+                base = (1280, 720)
 
         variants: list[tuple[str, tuple[int, int]]] = []
         if req.aspect_16_9:
@@ -267,18 +357,20 @@ class PromoEditor:
         suffix: str,
         temp_dir: Path,
     ) -> Path:
+        preset = "ultrafast" if req.draft_mode_10x else "veryfast"
+        crf = min(max(req.crf_quality + (8 if req.draft_mode_10x else 0), 12), 38)
         norm_clips: list[Path] = []
         for i, clip in enumerate(raw_clips):
             norm = temp_dir / f"norm_{suffix}_{i:03d}.mp4"
-            normalize_clip(clip, norm, width, height, fps)
+            normalize_clip(clip, norm, width, height, fps, preset=preset, crf=crf)
             norm_clips.append(norm)
 
         composed = temp_dir / f"composed_{suffix}.mp4"
-        if req.auto_edit_enabled and req.theme_transitions:
+        if req.transition_mode == "fade" and req.auto_edit_enabled and req.theme_transitions:
             filter_base, out_label = build_xfade_filter(len(norm_clips), seg_len, req.transition_seconds)
-            self._compose_clips(norm_clips, composed, filter_base, out_label)
+            self._compose_clips(norm_clips, composed, filter_base, out_label, preset=preset, crf=crf)
         else:
-            self._concat_only(norm_clips, composed)
+            self._concat_only(norm_clips, composed, preset=preset, crf=crf)
 
         total_duration = max(seg_len * len(norm_clips) - (len(norm_clips) - 1) * req.transition_seconds, 1.0)
         av = temp_dir / f"av_{suffix}.mp4"
@@ -294,6 +386,7 @@ class PromoEditor:
         if font_file is None:
             self.log("Font file not found; skipping drawtext overlays to avoid Fontconfig errors.")
         draw = self._drawtext_filter(req, total_duration, font_file)
+        draw = self._compose_vf(draw, req)
         bitrate = f"{max(req.custom_bitrate_k, 400)}k"
         cmd_final = [
             "ffmpeg",
@@ -305,9 +398,9 @@ class PromoEditor:
             "-c:v",
             "libx264",
             "-preset",
-            "veryfast",
+            preset,
             "-crf",
-            "20",
+            str(crf),
             "-b:v",
             bitrate,
             "-c:a",
@@ -320,7 +413,9 @@ class PromoEditor:
         self.log(f"Exported {final.name}")
         return final
 
-    def _compose_clips(self, norm_clips: list[Path], composed: Path, filter_base: str, out_label: str) -> None:
+    def _compose_clips(
+        self, norm_clips: list[Path], composed: Path, filter_base: str, out_label: str, *, preset: str, crf: int
+    ) -> None:
         cmd = ["ffmpeg", "-y"]
         for c in norm_clips:
             cmd += ["-i", str(c)]
@@ -333,9 +428,9 @@ class PromoEditor:
             "-c:v",
             "libx264",
             "-preset",
-            "veryfast",
+            preset,
             "-crf",
-            "20",
+            str(crf),
             str(composed),
         ]
         try:
@@ -343,9 +438,9 @@ class PromoEditor:
             return
         except FFmpegError:
             self.log("xfade composition failed on this system; falling back to stable concat mode.")
-        self._concat_only(norm_clips, composed)
+        self._concat_only(norm_clips, composed, preset=preset, crf=crf)
 
-    def _concat_only(self, norm_clips: list[Path], composed: Path) -> None:
+    def _concat_only(self, norm_clips: list[Path], composed: Path, *, preset: str, crf: int) -> None:
         concat_inputs = "".join(f"[{i}:v]" for i in range(len(norm_clips)))
         concat_filter = f"{concat_inputs}concat=n={len(norm_clips)}:v=1:a=0[vout]"
         fallback = ["ffmpeg", "-y"]
@@ -360,12 +455,37 @@ class PromoEditor:
             "-c:v",
             "libx264",
             "-preset",
-            "veryfast",
+            preset,
             "-crf",
-            "20",
+            str(crf),
             str(composed),
         ]
         run_cmd(fallback)
+
+    def _compose_vf(self, draw_filter: str, req: PromoRequest) -> str:
+        chain = [draw_filter]
+        style = req.style_preset
+        if style == "VHS Deluxe":
+            chain.append("eq=contrast=1.1:saturation=0.8,noise=alls=12:allf=t+u")
+        elif style == "CRT Glow":
+            chain.append("gblur=sigma=1.2,eq=brightness=0.03:saturation=1.2")
+        elif style == "Lo‑Fi Old Net":
+            chain.append("eq=contrast=0.95:saturation=0.7,noise=alls=18:allf=t")
+        else:  # Clean 2000s
+            chain.append("eq=contrast=1.03:saturation=1.05")
+
+        dance_power = max(min(req.dance_effects, 100), 0) / 100.0
+        if req.dance_mode_preset == "Off":
+            dance_power = 0.0
+        elif req.dance_mode_preset == "Soft":
+            dance_power = min(dance_power, 0.35)
+        elif req.dance_mode_preset == "Hard":
+            dance_power = max(dance_power, 0.7)
+        if req.instant_vfx or dance_power > 0:
+            sat = 1.0 + dance_power * 0.35
+            sharp = 3 + int(dance_power * 5)
+            chain.append(f"eq=saturation={sat:.2f},unsharp={sharp}:{sharp}:0.7")
+        return ",".join([c for c in chain if c])
 
     def _apply_event_sfx(self, av_input: Path, sfx_file: Path, out: Path, total_duration: float, req: PromoRequest) -> None:
         if req.voiceover_priority == "speech_priority":

@@ -23,6 +23,22 @@ def scan_asset_folders(base_dir: Path) -> dict[str, list[Path]]:
     }
 
 
+def scan_paths(paths: list[Path], exts: set[str], recursive: bool = False) -> list[Path]:
+    found: list[Path] = []
+    for root in paths:
+        if not root.exists() or not root.is_dir():
+            continue
+        if recursive:
+            candidates = (p for p in root.rglob("*") if p.is_file())
+        else:
+            candidates = (p for p in root.iterdir() if p.is_file())
+        for p in candidates:
+            if p.suffix.lower() in exts:
+                found.append(p)
+    # Unique + deterministic order
+    return sorted(set(found))
+
+
 def choose_random(items: list[Path], count: int) -> list[Path]:
     if not items or count <= 0:
         return []

@@ -31,6 +31,11 @@ AutoEditPromo is a Python desktop GUI app that auto-generates long or short prom
 - Low-res preview render option
 - Quality profiles: `preview_360p`, `hd`, `custom`
 - Mega Deluxe custom controls: Width, Height, FPS, Bitrate
+- CRF quality + resolution controls
+- Style presets: `Clean 2000s`, `VHS Deluxe`, `CRT Glow`, `Lo‑Fi Old Net`
+- Transition modes: `fade` or `cut` with adjustable transition seconds
+- Dance effects control (0-100) and dance mode presets: `Auto`, `Soft`, `Hard`, `Off`
+- Instant VFX toggle and 10x faster draft mode
 
 ### Build modes
 - `promo`
@@ -45,6 +50,11 @@ AutoEditPromo is a Python desktop GUI app that auto-generates long or short prom
 - Intro asset / Outro asset insertion
 - Generated naming preset (default: `Generated Mega Deluxe Promo & Remix & Songs`)
 - Target duration with auto-expanded clip sequencing for longer promos
+- Add multiple video folders and multiple audio folders
+- Optional recursive scan for large archives
+- Audio mode: `random_one` or `combine_shuffled`
+- Audio remix modes: `Original`, `Nightcore`, `Slow Jam`, `Hyper Dance`
+- Beat auto-edit reads TBPM/BPM tags when present, otherwise uses fallback BPM
 
 ## Requirements
 - Python 3.11+
@@ -62,3 +72,6 @@ Generated files are written to `output/`, including `output/final_promo.mp4`.
 ## Font note
 - To avoid `Fontconfig error: Cannot load default config file`, the app uses explicit `fontfile=` drawtext paths.
 - If no known font file is found on your system, generation continues and skips text overlays instead of failing.
+
+## Tip for very long videos
+- Increase **Total Clips** (for example `200+`) and widen **Min/Max Clip** seconds for long-form super-generation.

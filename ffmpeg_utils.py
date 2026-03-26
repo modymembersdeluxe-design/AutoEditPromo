@@ -39,18 +39,14 @@ def ffprobe_media(path: Path) -> dict:
     proc = run_cmd(cmd)
     raw = proc.stdout
     if raw is None:
-        raise FFmpegError(f"ffprobe returned no stdout for: {path}")
+        return {"format": {}, "streams": []}
     raw = raw.strip()
     if not raw:
-        stderr = (proc.stderr or "").strip()
-        raise FFmpegError(f"ffprobe returned empty JSON for: {path}. stderr: {stderr}")
+        return {"format": {}, "streams": []}
     try:
         return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        stderr = (proc.stderr or "").strip()
-        raise FFmpegError(
-            f"Invalid ffprobe JSON for: {path}. stderr: {stderr}"
-        ) from exc
+    except json.JSONDecodeError:
+        return {"format": {}, "streams": []}
 
 
 def parse_media_info(meta: dict) -> dict[str, float | int]:
